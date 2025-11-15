@@ -1,0 +1,19 @@
+[package]
+name = "rsparticle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { version = "0.14", features = ["dynamic_linking"] }
+rand = "0.8"
+rayon = "1.8"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
