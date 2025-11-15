@@ -1,97 +1,108 @@
-use bevy::prelude::*;
-use rand::Rng;
 use crate::components::*;
 use crate::resources::*;
+use bevy::prelude::*;
+use rand::Rng;
 
 /// 初期セットアップ
 pub fn setup(
     mut commands: Commands,
-    mut particle_registry: ResMut<ParticleTypeRegistry>,
-    mut interaction_matrix: ResMut<InteractionMatrix>,
     config: Res<SimulationConfig>,
+    evolution: Res<EvolutionConfig>,
 ) {
     // カメラのセットアップ
     commands.spawn(Camera2dBundle {
-        transform: Transform::from_xyz(
-            config.world_width / 2.0,
-            config.world_height / 2.0,
-            0.0,
-        ),
+        transform: Transform::from_xyz(config.world_width / 2.0, config.world_height / 2.0, 0.0),
         ..default()
     });
 
-    // 粒子タイプを定義（Color, 質量, 抵抗係数, 半径）
-    let type_red = particle_registry.add_type(Color::srgb(1.0, 0.0, 0.0), 1.0, 2.0, 2.0);
-    let type_green = particle_registry.add_type(Color::srgb(0.0, 1.0, 0.0), 1.0, 2.0, 2.0);
-    let type_blue = particle_registry.add_type(Color::srgb(0.0, 0.0, 1.0), 1.0, 2.0, 2.0);
-
-    // 相互作用行列を設定
-    interaction_matrix.set(type_red, type_red, 5000.0);
-    interaction_matrix.set(type_red, type_green, -20000.0);
-    interaction_matrix.set(type_red, type_blue, -10000.0);
-    interaction_matrix.set(type_green, type_red, -5000.0);
-    interaction_matrix.set(type_green, type_green, 5000.0);
-    interaction_matrix.set(type_green, type_blue, 5000.0);
-    interaction_matrix.set(type_blue, type_red, 5000.0);
-    interaction_matrix.set(type_blue, type_green, -20000.0);
-    interaction_matrix.set(type_blue, type_blue, 5000.0);
-
-    // 粒子を生成
-    let num_particles_per_type = 5000;
-    let spread_radius = config.world_width.min(config.world_height) * 0.25;  // 画面サイズの25%
-
     let mut rng = rand::thread_rng();
 
-    // 各タイプの中心位置（画面中央）
-    let center = Vec2::new(config.world_width / 2.0, config.world_height / 2.0);
-    let centers = [
-        center, // 赤
-        center, // 緑
-        center, // 青
-    ];
+    for _ in 0..config.initial_population {
+        let pos = Vec2::new(
+            rng.gen::<f32>() * config.world_width,
+            rng.gen::<f32>() * config.world_height,
+        );
 
-    let types = [type_red, type_green, type_blue];
+        let mass = rng.gen_range(0.5..2.0);
+        let drag = rng.gen_range(1.0..3.5);
 
-    for (type_idx, &particle_type) in types.iter().enumerate() {
-        let center = centers[type_idx];
-        let type_info = particle_registry.get_type(particle_type).unwrap();
+        let affinity_raw = Vec3::new(
+            rng.gen_range(-1.0..1.0),
+            rng.gen_range(-1.0..1.0),
+            rng.gen_range(-1.0..1.0),
+        );
+        let affinity_vector = affinity_raw.normalize_or_zero();
 
-        for _ in 0..num_particles_per_type {
-            let angle: f32 = rng.gen::<f32>() * std::f32::consts::TAU;
-            let distance: f32 = rng.gen::<f32>() * spread_radius;
-            let offset = Vec2::new(angle.cos() * distance, angle.sin() * distance);
-            let pos = center + offset;
+        let mate_kernel = MateKernelParams {
+            bias: rng.gen_range(-0.5..0.5),
+            distance_weight: rng.gen_range(0.5..1.5),
+            distance_scale: rng
+                .gen_range(evolution.mating_radius * 0.5..evolution.mating_radius * 1.5)
+                .max(1.0),
+            energy_weight: rng.gen_range(0.5..1.5),
+            similarity_weight: rng.gen_range(-1.0..1.0),
+            diversity_weight: rng.gen_range(0.2..1.2),
+            crowding_weight: rng.gen_range(0.2..1.0),
+            slope: rng.gen_range(0.5..2.0),
+        };
 
-            let vel_x: f32 = rng.gen::<f32>() * 20.0 - 10.0;
-            let vel_y: f32 = rng.gen::<f32>() * 20.0 - 10.0;
-            let vel = Vec2::new(vel_x, vel_y);
+        let mutation = MutationParams {
+            sigma_base: evolution.mutation_sigma_base * rng.gen_range(0.8..1.2),
+            sigma_scale: evolution.mutation_sigma_scale * rng.gen_range(0.8..1.2),
+            trait_lock_probability: evolution.trait_lock_probability * rng.gen_range(0.7..1.3),
+        };
 
-            // 粒子を spawn
-            commands.spawn((
-                SpriteBundle {
-                    sprite: Sprite {
-                        color: type_info.color,
-                        custom_size: Some(Vec2::new(type_info.radius * 2.0, type_info.radius * 2.0)),
-                        ..default()
-                    },
-                    transform: Transform::from_xyz(pos.x, pos.y, 0.0),
+        let genome = ParticleGenome {
+            mass,
+            drag_coefficient: drag,
+            affinity_vector,
+            mate_kernel,
+            mutation,
+            dominance_bias: rng.gen_range(0.1..0.9),
+            reproductive_strength: rng.gen_range(0.5..1.5),
+        };
+
+        let appearance = ParticleAppearance::from_genome(&genome);
+        let sprite_size = appearance.sprite_extents();
+        let display_color = appearance.color;
+
+        let state = ParticleState {
+            lifetime: config.initial_lifetime,
+            max_lifetime: config.initial_lifetime,
+            distance_traveled: 0.0,
+            offspring_count: 0,
+            cooldown: 0.0,
+        };
+
+        let velocity = Vec2::new(rng.gen_range(-20.0..20.0), rng.gen_range(-20.0..20.0));
+
+        commands.spawn((
+            SpriteBundle {
+                sprite: Sprite {
+                    color: display_color,
+                    custom_size: Some(sprite_size),
                     ..default()
                 },
-                Particle { 
-                    particle_type,
-                    radius: type_info.radius,
-                },
-                Velocity { value: vel },
-                Acceleration::default(),
-                PhysicsParams {
-                    mass: type_info.mass,
-                    drag_coefficient: type_info.drag_coefficient,
-                },
-            ));
-        }
+                transform: Transform::from_xyz(pos.x, pos.y, 0.0),
+                ..default()
+            },
+            Particle {
+                radius: appearance.collision_radius(),
+            },
+            genome,
+            appearance,
+            state,
+            Velocity { value: velocity },
+            Acceleration::default(),
+            PhysicsParams {
+                mass: mass,
+                drag_coefficient: drag,
+            },
+            KinematicsHistory { last_position: pos },
+        ));
     }
 
-    info!("Spawned {} particles", num_particles_per_type * 3);
+    info!("Spawned {} particles", config.initial_population);
 }
 
 /// FPS表示用のテキストコンポーネント

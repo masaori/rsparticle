@@ -1,19 +1,21 @@
-use bevy::prelude::*;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
+use bevy::prelude::*;
 
 mod components;
 mod resources;
 mod systems;
 
 use resources::*;
+use systems::lifecycle::*;
 use systems::physics::*;
-use systems::spatial::*;
+use systems::reproduction::*;
 use systems::setup::*;
+use systems::spatial::*;
 
 fn main() {
     let config = SimulationConfig::default();
-    let cell_size = config.interaction_radius / 2.0;  // セルサイズを相互作用半径の半分に
-    
+    let cell_size = config.interaction_radius / 2.0; // セルサイズを相互作用半径の半分に
+
     App::new()
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
@@ -26,10 +28,13 @@ fn main() {
             }),
             FrameTimeDiagnosticsPlugin,
         ))
-        .init_resource::<ParticleTypeRegistry>()
         .insert_resource(config.clone())
-        .insert_resource(InteractionMatrix::new(3))
-        .insert_resource(SpatialGrid::new(config.world_width, config.world_height, cell_size))
+        .insert_resource(EvolutionConfig::default())
+        .insert_resource(SpatialGrid::new(
+            config.world_width,
+            config.world_height,
+            cell_size,
+        ))
         .add_systems(Startup, (setup, setup_ui))
         .add_systems(
             Update,
@@ -39,15 +44,12 @@ fn main() {
                 update_spatial_grid,
                 calculate_accelerations,
                 update_velocities,
+                update_lifetimes,
+                attempt_mating,
+                despawn_dead_particles,
                 update_ui,
             )
                 .chain(),
         )
         .run();
-}
-
-impl Default for ParticleTypeRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
 }

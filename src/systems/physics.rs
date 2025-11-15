@@ -1,16 +1,17 @@
-use bevy::prelude::*;
-use rayon::prelude::*;
 use crate::components::*;
 use crate::resources::*;
+use bevy::prelude::*;
+use rayon::prelude::*;
 
 /// 位置を更新（Velocity Verlet 積分の前半）
 pub fn update_positions(
     time: Res<Time>,
     mut query: Query<(&mut Transform, &Velocity, &Acceleration), With<Particle>>,
 ) {
-    let dt = time.delta_seconds();
+    // FPS低下による爆発を防ぐため、dtを最大16.67ms(60fps)に制限
+    let dt = time.delta_seconds().min(1.0 / 60.0);
     let dt_sq = dt * dt;
-    let half_dt_sq = 0.5 * dt_sq;  // 事前計算
+    let half_dt_sq = 0.5 * dt_sq; // 事前計算
 
     for (mut transform, velocity, acceleration) in query.iter_mut() {
         // p(t+dt) = p(t) + v(t)*dt + 0.5*a(t)*dt^2
@@ -33,9 +34,15 @@ pub fn apply_boundary_wrap(
 /// 加速度を計算（並列化 + 最適化版）
 pub fn calculate_accelerations(
     config: Res<SimulationConfig>,
-    interaction_matrix: Res<InteractionMatrix>,
     spatial_grid: Res<SpatialGrid>,
-    mut query: Query<(Entity, &Transform, &Particle, &PhysicsParams, &mut Acceleration)>,
+    mut query: Query<(
+        Entity,
+        &Transform,
+        &Particle,
+        &PhysicsParams,
+        &ParticleGenome,
+        &mut Acceleration,
+    )>,
 ) {
     let softening_sq = config.softening_epsilon * config.softening_epsilon;
     let interaction_radius_sq = config.interaction_radius * config.interaction_radius;
@@ -45,10 +52,18 @@ pub fn calculate_accelerations(
 
     // エンティティのデータをHashMapに収集（O(1)でアクセス可能に）
     use bevy::utils::HashMap;
-    let particles: HashMap<Entity, (Vec3, usize, f32, f32)> = query
+    let particles: HashMap<Entity, (Vec3, f32, f32, ParticleGenome)> = query
         .iter()
-        .map(|(entity, transform, particle, physics, _)| {
-            (entity, (transform.translation, particle.particle_type, physics.mass, particle.radius))
+        .map(|(entity, transform, particle, physics, genome, _)| {
+            (
+                entity,
+                (
+                    transform.translation,
+                    particle.radius,
+                    physics.mass,
+                    genome.clone(),
+                ),
+            )
         })
         .collect();
 
@@ -59,7 +74,7 @@ pub fn calculate_accelerations(
     let accelerations: Vec<(Entity, Vec2)> = entities
         .par_iter()
         .map(|&entity_i| {
-            let (pos_i, type_i, mass_i, radius_i) = particles[&entity_i];
+            let (pos_i, radius_i, mass_i, genome_i) = &particles[&entity_i];
             let cell = spatial_grid.get_cell(pos_i.x, pos_i.y);
             let neighbors = spatial_grid.get_neighbors(cell);
 
@@ -70,7 +85,7 @@ pub fn calculate_accelerations(
                     continue;
                 }
 
-                if let Some((pos_j, type_j, mass_j, radius_j)) = particles.get(&entity_j) {
+                if let Some((pos_j, radius_j, mass_j, genome_j)) = particles.get(&entity_j) {
                     // 周期境界条件を考慮した距離ベクトルの計算（最適化版）
                     let mut dx = pos_j.x - pos_i.x;
                     let mut dy = pos_j.y - pos_i.y;
@@ -95,31 +110,33 @@ pub fn calculate_accelerations(
                     }
 
                     let dist = dist_sq.sqrt();
-                    let min_dist = radius_i + radius_j;
+                    let min_dist = *radius_i + *radius_j;
 
                     // 力の方向（正規化） - dx, dy は j から i への方向
                     let inv_dist = 1.0 / dist;
                     let norm_dx = dx * inv_dist;
                     let norm_dy = dy * inv_dist;
 
-                    let inv_mass = 1.0 / mass_i;
+                    let inv_mass = 1.0 / *mass_i;
 
                     // 衝突判定: 粒子が重なっている場合は強い反発力を加える
                     let (acc_x, acc_y) = if dist < min_dist {
                         // 衝突時の反発加速度（ハードコア反発）
                         // 反発力は i から j を押し出す方向（-dx, -dy方向）
                         let overlap = min_dist - dist;
-                        let stiffness = 2000.0; // 反発の強さ（加速度ベース）
-                        let repulsion_acc = stiffness * overlap / min_dist; // 正規化
-                        (-norm_dx * repulsion_acc, -norm_dy * repulsion_acc)
+                        let repulsion_acc = config.collision_stiffness * overlap / min_dist;
+                        // 衝突反発にも加速度上限を適用
+                        let clamped_repulsion = repulsion_acc.min(max_acc_sq.sqrt());
+                        (-norm_dx * clamped_repulsion, -norm_dy * clamped_repulsion)
                     } else {
                         // 通常の相互作用力（引力/斥力）
                         let softened_dist_sq = dist_sq + softening_sq;
-                        let g_ij = interaction_matrix.get(type_i, *type_j);
-                        let force_mag = g_ij * mass_i * mass_j / softened_dist_sq;
+                        let g_ij =
+                            config.interaction_strength * genome_i.interaction_scalar(genome_j);
+                        let force_mag = g_ij * *mass_i * *mass_j / softened_dist_sq;
                         let force_x = norm_dx * force_mag;
                         let force_y = norm_dy * force_mag;
-                        
+
                         let mut acc_x = force_x * inv_mass;
                         let mut acc_y = force_y * inv_mass;
 
@@ -130,7 +147,7 @@ pub fn calculate_accelerations(
                             acc_x *= scale;
                             acc_y *= scale;
                         }
-                        
+
                         (acc_x, acc_y)
                     };
 
@@ -142,12 +159,12 @@ pub fn calculate_accelerations(
             (entity_i, total_acceleration)
         })
         .collect();
-    
+
     // VecからHashMapに変換
     let accelerations_map: HashMap<Entity, Vec2> = accelerations.into_iter().collect();
 
     // 計算した加速度を適用
-    for (entity, _, _, _, mut acceleration) in query.iter_mut() {
+    for (entity, _, _, _, _, mut acceleration) in query.iter_mut() {
         acceleration.value = *accelerations_map.get(&entity).unwrap_or(&Vec2::ZERO);
     }
 }
@@ -157,7 +174,8 @@ pub fn update_velocities(
     time: Res<Time>,
     mut query: Query<(&mut Velocity, &Acceleration, &PhysicsParams), With<Particle>>,
 ) {
-    let dt = time.delta_seconds();
+    // FPS低下による爆発を防ぐため、dtを最大16.67ms(60fps)に制限
+    let dt = time.delta_seconds().min(1.0 / 60.0);
 
     for (mut velocity, acceleration, physics) in query.iter_mut() {
         // v(t+dt) = v(t) + a(t+dt)*dt
