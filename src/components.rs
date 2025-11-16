@@ -13,8 +13,10 @@ pub struct ParticleGenome {
     pub mass: f32,
     /// 空気抵抗係数。大きいほど減速しやすい（0.3〜5.0程度）
     pub drag_coefficient: f32,
-    /// 粒子の嗜好・相性ベクトル。正規化済みの方向で表現（-1.0〜1.0）
-    pub affinity_vector: Vec3,
+    /// 他個体へ放つシグナル（力の起点）
+    pub signal_vector: Vec3,
+    /// 受信時の反応ベクトル（力の向きや嗜好に影響）
+    pub response_vector: Vec3,
     /// 交配成功率計算のパラメータ集合
     pub mate_kernel: MateKernelParams,
     /// 突然変異分布の幅や固定化確率を決める値
@@ -27,7 +29,7 @@ pub struct ParticleGenome {
 
 impl ParticleGenome {
     pub fn interaction_scalar(&self, other: &ParticleGenome) -> f32 {
-        self.affinity_vector.dot(other.affinity_vector)
+        self.response_vector.dot(other.signal_vector)
     }
 }
 
@@ -41,9 +43,21 @@ pub struct ParticleAppearance {
 
 impl ParticleAppearance {
     pub fn from_genome(genome: &ParticleGenome) -> Self {
-        let normalized_affinity = genome.affinity_vector.normalize_or_zero();
-        let hue = if normalized_affinity.length_squared() > 0.0 {
-            normalized_affinity.y.atan2(normalized_affinity.x)
+        let normalized_response = genome.response_vector.normalize_or_zero();
+        let normalized_signal = genome.signal_vector.normalize_or_zero();
+
+        let mut hue_direction = Vec2::ZERO;
+        if normalized_response.length_squared() > 0.0 {
+            hue_direction += normalized_response.xy();
+        }
+        if normalized_signal.length_squared() > 0.0 {
+            hue_direction += normalized_signal.xy() * 0.6; // signalは方向に軽く寄与
+        }
+
+        let hue = if hue_direction.length_squared() > 0.0 {
+            hue_direction
+                .y
+                .atan2(hue_direction.x)
                 .to_degrees()
                 .rem_euclid(360.0)
         } else {
@@ -57,24 +71,27 @@ impl ParticleAppearance {
             genome.mate_kernel.energy_weight,
             genome.mate_kernel.crowding_weight,
         ];
-        let weights_avg = kernel_weights
-            .iter()
-            .map(|w| w.abs())
-            .sum::<f32>()
-            / kernel_weights.len() as f32;
+        let weights_avg =
+            kernel_weights.iter().map(|w| w.abs()).sum::<f32>() / kernel_weights.len() as f32;
         let weights_norm = ((weights_avg - 0.25) / 0.85).clamp(0.0, 1.0);
         let slope_norm = ((genome.mate_kernel.slope - 0.5) / 1.5).clamp(0.0, 1.0);
-        let saturation = (0.7 * weights_norm + 0.3 * slope_norm).clamp(0.0, 1.0);
+        let signal_alignment =
+            ((normalized_signal.dot(normalized_response) + 1.0) * 0.5).clamp(0.0, 1.0);
+        let saturation =
+            (0.55 * weights_norm + 0.25 * slope_norm + 0.20 * signal_alignment).clamp(0.0, 1.0);
 
         let fertility_norm = ((genome.reproductive_strength - 0.5) / 1.0).clamp(0.0, 1.0);
-        let affinity_norm = (normalized_affinity.z * 0.5 + 0.5).clamp(0.0, 1.0);
-        let lightness = (0.7 * fertility_norm + 0.3 * affinity_norm).clamp(0.0, 1.0);
+        let response_norm = (normalized_response.z * 0.5 + 0.5).clamp(0.0, 1.0);
+        let signal_norm = (normalized_signal.z * 0.5 + 0.5).clamp(0.0, 1.0);
+        let lightness =
+            (0.6 * fertility_norm + 0.25 * response_norm + 0.15 * signal_norm).clamp(0.0, 1.0);
         let color = Color::hsl(hue, saturation, lightness);
 
         let drag_norm = ((genome.drag_coefficient - 1.0) / 2.5).clamp(0.0, 1.0);
         let size = (10.0 - (10.0 - 2.0) * drag_norm).clamp(2.0, 10.0);
 
-        let mutation_sum = (genome.mutation.sigma_base + genome.mutation.sigma_scale).clamp(0.05, 4.0);
+        let mutation_sum =
+            (genome.mutation.sigma_base + genome.mutation.sigma_scale).clamp(0.05, 4.0);
         let mutation_norm = ((mutation_sum - 0.1) / 1.5).clamp(0.0, 1.0);
         let aspect_ratio = 0.5 + mutation_norm * (2.0 - 0.5);
 

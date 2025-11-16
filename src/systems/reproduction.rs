@@ -15,6 +15,7 @@ struct ParentSnapshot {
     genome: ParticleGenome,
     state: ParticleState,
     velocity: Vec2,
+    radius: f32,
 }
 
 /// 交配と子粒子生成を試みる
@@ -29,6 +30,7 @@ pub fn attempt_mating(
         &ParticleGenome,
         &ParticleState,
         &Velocity,
+        &Particle,
     )>,
 ) {
     if query.is_empty() {
@@ -36,7 +38,7 @@ pub fn attempt_mating(
     }
 
     let mut snapshots: HashMap<Entity, ParentSnapshot> = HashMap::new();
-    for (entity, transform, genome, state, velocity) in query.iter() {
+    for (entity, transform, genome, state, velocity, particle) in query.iter() {
         snapshots.insert(
             entity,
             ParentSnapshot {
@@ -45,6 +47,7 @@ pub fn attempt_mating(
                 genome: genome.clone(),
                 state: state.clone(),
                 velocity: velocity.value,
+                radius: particle.radius.max(1.0),
             },
         );
     }
@@ -85,7 +88,12 @@ pub fn attempt_mating(
                 {
                     continue;
                 }
-                if snapshot.position.distance(candidate.position) > evolution.mating_radius {
+                let effective_radius = size_scaled_radius(
+                    snapshot.radius,
+                    candidate.radius,
+                    evolution.mating_radius_ratio,
+                );
+                if snapshot.position.distance(candidate.position) > effective_radius {
                     continue;
                 }
                 let mut with_state = candidate.clone();
@@ -116,7 +124,8 @@ pub fn attempt_mating(
         parents.extend(eligible_neighbors.into_iter().take(parent_count - 1));
 
         let kernel = aggregate_kernel(&parents);
-        let success_prob = mating_success_probability(&parents, &kernel);
+        let success_prob =
+            mating_success_probability(&parents, &kernel, evolution.distance_weight_scale);
         if rng.gen::<f32>() > success_prob {
             continue;
         }
@@ -131,11 +140,11 @@ pub fn attempt_mating(
             updated_states.insert(parent.entity, updated);
         }
 
-    let child_genome = synthesize_child_genome(&parents, &evolution, &mut rng);
-    let appearance = ParticleAppearance::from_genome(&child_genome);
-    let sprite_size = appearance.sprite_extents();
-    let color = appearance.color;
-    let radius = appearance.collision_radius();
+        let child_genome = synthesize_child_genome(&parents, &evolution, &mut rng);
+        let appearance = ParticleAppearance::from_genome(&child_genome);
+        let sprite_size = appearance.sprite_extents();
+        let color = appearance.color;
+        let radius = appearance.collision_radius();
         let weights = normalized_weights(&parents);
         let max_lifetime = weighted_sum(&parents, &weights, |p| p.state.max_lifetime).max(20.0);
         let lifetime = (max_lifetime * rng.gen_range(0.4..0.8)).clamp(5.0, max_lifetime);
@@ -146,8 +155,12 @@ pub fn attempt_mating(
             offspring_count: 0,
             cooldown: evolution.cooldown_base * 0.5,
         };
+        let avg_radius = average_radius(&parents);
         let mut position = weighted_vec2(&parents, &weights, |p| p.position)
-            + random_offset(&mut rng, evolution.mating_radius * 0.2);
+            + random_offset(
+                &mut rng,
+                avg_radius * evolution.mating_radius_ratio.max(0.1) * 0.2,
+            );
         position.x = position.x.rem_euclid(sim_config.world_width);
         position.y = position.y.rem_euclid(sim_config.world_height);
 
@@ -217,7 +230,11 @@ fn aggregate_kernel(parents: &[ParentSnapshot]) -> MateKernelParams {
     kernel
 }
 
-fn mating_success_probability(parents: &[ParentSnapshot], kernel: &MateKernelParams) -> f32 {
+fn mating_success_probability(
+    parents: &[ParentSnapshot],
+    kernel: &MateKernelParams,
+    distance_weight_scale: f32,
+) -> f32 {
     let n = parents.len();
     if n == 0 {
         return 0.0;
@@ -231,8 +248,8 @@ fn mating_success_probability(parents: &[ParentSnapshot], kernel: &MateKernelPar
             total_distance += parents[i].position.distance(parents[j].position);
             total_similarity += parents[i]
                 .genome
-                .affinity_vector
-                .dot(parents[j].genome.affinity_vector);
+                .response_vector
+                .dot(parents[j].genome.response_vector);
             pair_count += 1;
         }
     }
@@ -253,9 +270,10 @@ fn mating_success_probability(parents: &[ParentSnapshot], kernel: &MateKernelPar
     let crowding = n as f32;
 
     let distance_term = (-avg_distance / kernel.distance_scale).exp();
+    let scaled_distance_weight = kernel.distance_weight * distance_weight_scale.max(0.1);
 
     let mut score = kernel.bias;
-    score += kernel.distance_weight * distance_term;
+    score += scaled_distance_weight * distance_term;
     score += kernel.energy_weight * (avg_energy - 0.5);
     score += kernel.similarity_weight * avg_similarity;
     score += kernel.diversity_weight * diversity;
@@ -271,12 +289,12 @@ fn affinity_variance(parents: &[ParentSnapshot]) -> f32 {
 
     let mean = parents
         .iter()
-        .fold(Vec3::ZERO, |acc, p| acc + p.genome.affinity_vector)
+        .fold(Vec3::ZERO, |acc, p| acc + p.genome.response_vector)
         / parents.len() as f32;
 
     let variance = parents
         .iter()
-        .map(|p| (p.genome.affinity_vector - mean).length_squared())
+        .map(|p| (p.genome.response_vector - mean).length_squared())
         .sum::<f32>()
         / parents.len() as f32;
 
@@ -288,6 +306,7 @@ fn synthesize_child_genome(
     evolution: &EvolutionConfig,
     rng: &mut rand::rngs::ThreadRng,
 ) -> ParticleGenome {
+    let avg_radius = average_radius(parents).max(1.0);
     let weights = normalized_weights(parents);
     let lock_probability = parents
         .iter()
@@ -331,14 +350,25 @@ fn synthesize_child_genome(
         rng,
     );
 
-    let affinity_vector = mix_vec3(
+    let signal_vector = mix_vec3(
         parents,
         &weights,
         lock_probability,
         sigma_base,
         sigma_scale,
         rng,
-        |g| g.affinity_vector,
+        |g| g.signal_vector,
+    )
+    .normalize_or_zero();
+
+    let response_vector = mix_vec3(
+        parents,
+        &weights,
+        lock_probability,
+        sigma_base,
+        sigma_scale,
+        rng,
+        |g| g.response_vector,
     )
     .normalize_or_zero();
 
@@ -372,8 +402,8 @@ fn synthesize_child_genome(
             sigma_base,
             sigma_scale,
             |g| g.mate_kernel.distance_scale,
-            5.0,
-            evolution.mating_radius * 2.5,
+            (avg_radius * evolution.mating_radius_ratio * 0.5).max(1.0),
+            (avg_radius * evolution.mating_radius_ratio * 2.5).max(2.0),
             rng,
         )
         .max(1.0),
@@ -463,7 +493,8 @@ fn synthesize_child_genome(
     ParticleGenome {
         mass,
         drag_coefficient: drag,
-        affinity_vector,
+        signal_vector,
+        response_vector,
         mate_kernel,
         mutation,
         dominance_bias: mix_scalar(
@@ -489,6 +520,18 @@ fn synthesize_child_genome(
             rng,
         ),
     }
+}
+
+fn average_radius(parents: &[ParentSnapshot]) -> f32 {
+    if parents.is_empty() {
+        return 1.0;
+    }
+    parents.iter().map(|p| p.radius).sum::<f32>() / parents.len() as f32
+}
+
+fn size_scaled_radius(a: f32, b: f32, ratio: f32) -> f32 {
+    let avg = ((a + b) * 0.5).max(1.0);
+    (avg * ratio.max(0.1)).max(1.0)
 }
 
 fn normalized_weights(parents: &[ParentSnapshot]) -> Vec<f32> {

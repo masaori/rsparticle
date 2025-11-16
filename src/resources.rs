@@ -25,7 +25,7 @@ impl Default for SimulationConfig {
             interaction_radius: 150.0,
             interaction_strength: 10000.0,
             collision_stiffness: 1000.0,
-            initial_population: 10000,
+            initial_population: 5000,
             initial_lifetime: 50.0,
         }
     }
@@ -34,9 +34,10 @@ impl Default for SimulationConfig {
 /// 進化・交配ルール
 #[derive(Resource, Clone)]
 pub struct EvolutionConfig {
-    pub mating_radius: f32,
+    pub mating_radius_ratio: f32,
     pub min_parents: usize,
     pub max_parents: usize,
+    pub distance_weight_scale: f32,
     pub reproduction_cost: f32,
     pub base_decay_per_second: f32,
     pub life_loss_per_distance: f32,
@@ -50,11 +51,12 @@ pub struct EvolutionConfig {
 impl Default for EvolutionConfig {
     fn default() -> Self {
         Self {
-            mating_radius: 30.0,
+            mating_radius_ratio: 2.0,
             min_parents: 1,
             max_parents: 8,
-            reproduction_cost: 5.0,
-            base_decay_per_second: 0.5,
+            distance_weight_scale: 2.0,
+            reproduction_cost: 10.0,
+            base_decay_per_second: 1.0,
             life_loss_per_distance: 0.1,
             cooldown_base: 1.5,
             mutation_sigma_base: 0.05,
@@ -72,15 +74,18 @@ pub struct SpatialGrid {
     pub grid: HashMap<(i32, i32), Vec<Entity>>,
     pub cols: i32,
     pub rows: i32,
+    pub neighbor_span: i32,
 }
 
 impl SpatialGrid {
-    pub fn new(world_width: f32, world_height: f32, cell_size: f32) -> Self {
+    pub fn new(world_width: f32, world_height: f32, cell_size: f32, max_query_radius: f32) -> Self {
+        let neighbor_span = (max_query_radius / cell_size).ceil().max(1.0) as i32;
         Self {
             cell_size,
             grid: HashMap::new(),
             cols: (world_width / cell_size).ceil() as i32,
             rows: (world_height / cell_size).ceil() as i32,
+            neighbor_span,
         }
     }
 
@@ -99,8 +104,8 @@ impl SpatialGrid {
         let mut capacity = 0;
 
         // 事前にサイズを計算
-        for dx in -1..=1 {
-            for dy in -1..=1 {
+        for dx in -self.neighbor_span..=self.neighbor_span {
+            for dy in -self.neighbor_span..=self.neighbor_span {
                 let nx = (cx + dx).rem_euclid(self.cols);
                 let ny = (cy + dy).rem_euclid(self.rows);
                 if let Some(entities) = self.grid.get(&(nx, ny)) {
@@ -111,9 +116,9 @@ impl SpatialGrid {
 
         let mut neighbors = Vec::with_capacity(capacity);
 
-        // 周囲9セルを探索（周期境界条件対応）
-        for dx in -1..=1 {
-            for dy in -1..=1 {
+        // 周囲セルを探索（周期境界条件対応）
+        for dx in -self.neighbor_span..=self.neighbor_span {
+            for dy in -self.neighbor_span..=self.neighbor_span {
                 let nx = (cx + dx).rem_euclid(self.cols);
                 let ny = (cy + dy).rem_euclid(self.rows);
 

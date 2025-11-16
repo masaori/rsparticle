@@ -34,6 +34,7 @@ fn main() {
             config.world_width,
             config.world_height,
             cell_size,
+            config.interaction_radius,
         ))
         .add_systems(Startup, (setup, setup_ui))
         .add_systems(

@@ -24,21 +24,25 @@ pub fn setup(
         );
 
         let mass = rng.gen_range(0.5..2.0);
-        let drag = rng.gen_range(1.0..3.5);
+        let drag_coefficient = rng.gen_range(0.01..3.5);
 
-        let affinity_raw = Vec3::new(
+        let signal_raw = Vec3::new(
             rng.gen_range(-1.0..1.0),
             rng.gen_range(-1.0..1.0),
             rng.gen_range(-1.0..1.0),
         );
-        let affinity_vector = affinity_raw.normalize_or_zero();
+        let response_raw = Vec3::new(
+            rng.gen_range(-1.0..1.0),
+            rng.gen_range(-1.0..1.0),
+            rng.gen_range(-1.0..1.0),
+        );
+        let signal_vector = signal_raw.normalize_or_zero();
+        let response_vector = response_raw.normalize_or_zero();
 
         let mate_kernel = MateKernelParams {
             bias: rng.gen_range(-0.5..0.5),
             distance_weight: rng.gen_range(0.5..1.5),
-            distance_scale: rng
-                .gen_range(evolution.mating_radius * 0.5..evolution.mating_radius * 1.5)
-                .max(1.0),
+            distance_scale: 1.0,
             energy_weight: rng.gen_range(0.5..1.5),
             similarity_weight: rng.gen_range(-1.0..1.0),
             diversity_weight: rng.gen_range(0.2..1.2),
@@ -52,10 +56,11 @@ pub fn setup(
             trait_lock_probability: evolution.trait_lock_probability * rng.gen_range(0.7..1.3),
         };
 
-        let genome = ParticleGenome {
+        let mut genome = ParticleGenome {
             mass,
-            drag_coefficient: drag,
-            affinity_vector,
+            drag_coefficient,
+            signal_vector,
+            response_vector,
             mate_kernel,
             mutation,
             dominance_bias: rng.gen_range(0.1..0.9),
@@ -63,6 +68,9 @@ pub fn setup(
         };
 
         let appearance = ParticleAppearance::from_genome(&genome);
+        let collision_radius = appearance.collision_radius();
+        genome.mate_kernel.distance_scale =
+            (collision_radius * evolution.mating_radius_ratio * rng.gen_range(0.5..1.5)).max(1.0);
         let sprite_size = appearance.sprite_extents();
         let display_color = appearance.color;
 
@@ -87,7 +95,7 @@ pub fn setup(
                 ..default()
             },
             Particle {
-                radius: appearance.collision_radius(),
+                radius: collision_radius,
             },
             genome,
             appearance,
@@ -96,7 +104,7 @@ pub fn setup(
             Acceleration::default(),
             PhysicsParams {
                 mass: mass,
-                drag_coefficient: drag,
+                drag_coefficient,
             },
             KinematicsHistory { last_position: pos },
         ));
