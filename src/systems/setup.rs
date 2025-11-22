@@ -327,8 +327,8 @@ pub fn handle_ui_interaction(
         (&Interaction, &mut BackgroundColor, Option<&StartStopButton>, Option<&ResetButton>, Option<&AlgorithmButton>),
         (Changed<Interaction>, With<Button>),
     >,
-    mut state: ResMut<crate::resources::SimulationState>,
-    mut algorithm: ResMut<crate::resources::SimulationAlgorithm>,
+    mut state: ResMut<SimulationState>,
+    mut algorithm: ResMut<SimulationAlgorithm>,
     particle_query: Query<Entity, With<Particle>>,
     config: Res<SimulationConfig>,
     evolution: Res<EvolutionConfig>,
@@ -339,8 +339,8 @@ pub fn handle_ui_interaction(
                 if start_stop.is_some() {
                     // Start/Stop ボタンが押された
                     *state = match *state {
-                        crate::resources::SimulationState::Running => crate::resources::SimulationState::Paused,
-                        crate::resources::SimulationState::Paused => crate::resources::SimulationState::Running,
+                        SimulationState::Running => SimulationState::Paused,
+                        SimulationState::Paused => SimulationState::Running,
                     };
                 } else if reset.is_some() {
                     // Reset ボタンが押された
@@ -351,13 +351,13 @@ pub fn handle_ui_interaction(
                     // 初期粒子を再生成
                     spawn_initial_particles(&mut commands, &config, &evolution);
                     // シミュレーションを再開
-                    *state = crate::resources::SimulationState::Running;
+                    *state = SimulationState::Running;
                 } else if algo.is_some() {
                     // Algorithm ボタンが押された - 次のアルゴリズムに切り替え
                     *algorithm = match *algorithm {
-                        crate::resources::SimulationAlgorithm::Standard => crate::resources::SimulationAlgorithm::PhysicsOnly,
-                        crate::resources::SimulationAlgorithm::PhysicsOnly => crate::resources::SimulationAlgorithm::FastReproduction,
-                        crate::resources::SimulationAlgorithm::FastReproduction => crate::resources::SimulationAlgorithm::Standard,
+                        SimulationAlgorithm::Standard => SimulationAlgorithm::PhysicsOnly,
+                        SimulationAlgorithm::PhysicsOnly => SimulationAlgorithm::FastReproduction,
+                        SimulationAlgorithm::FastReproduction => SimulationAlgorithm::Standard,
                     };
                 }
                 *color = Color::srgb(0.35, 0.75, 0.35).into();
@@ -401,14 +401,14 @@ fn spawn_initial_particles(
 pub fn update_ui(
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     particle_query: Query<&Particle>,
-    state: Res<crate::resources::SimulationState>,
-    algorithm: Res<crate::resources::SimulationAlgorithm>,
+    state: Res<SimulationState>,
+    algorithm: Res<SimulationAlgorithm>,
     mut fps_query: Query<&mut Text, (With<FpsText>, Without<ParticleCountText>, Without<AlgorithmText>, Without<StateText>)>,
     mut count_query: Query<&mut Text, (With<ParticleCountText>, Without<FpsText>, Without<AlgorithmText>, Without<StateText>)>,
     mut algo_query: Query<&mut Text, (With<AlgorithmText>, Without<FpsText>, Without<ParticleCountText>, Without<StateText>)>,
     mut state_query: Query<&mut Text, (With<StateText>, Without<FpsText>, Without<ParticleCountText>, Without<AlgorithmText>)>,
     button_query: Query<(&Children, Option<&StartStopButton>), With<Button>>,
-    mut button_text_query: Query<&mut Text>,
+    mut button_text_query: Query<&mut Text, (Without<FpsText>, Without<ParticleCountText>, Without<AlgorithmText>, Without<StateText>)>,
 ) {
     // FPS更新
     if let Ok(mut text) = fps_query.get_single_mut() {
@@ -433,11 +433,11 @@ pub fn update_ui(
     // 状態表示更新
     if let Ok(mut text) = state_query.get_single_mut() {
         match *state {
-            crate::resources::SimulationState::Running => {
+            SimulationState::Running => {
                 text.sections[0].value = "State: Running".to_string();
                 text.sections[0].style.color = Color::srgb(0.0, 1.0, 0.0);
             }
-            crate::resources::SimulationState::Paused => {
+            SimulationState::Paused => {
                 text.sections[0].value = "State: Paused".to_string();
                 text.sections[0].style.color = Color::srgb(1.0, 1.0, 0.0);
             }
@@ -450,8 +450,8 @@ pub fn update_ui(
             for &child in children.iter() {
                 if let Ok(mut text) = button_text_query.get_mut(child) {
                     text.sections[0].value = match *state {
-                        crate::resources::SimulationState::Running => "Stop".to_string(),
-                        crate::resources::SimulationState::Paused => "Start".to_string(),
+                        SimulationState::Running => "Stop".to_string(),
+                        SimulationState::Paused => "Start".to_string(),
                     };
                 }
             }

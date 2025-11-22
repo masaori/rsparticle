@@ -6,11 +6,11 @@ use rayon::prelude::*;
 /// 位置を更新（Velocity Verlet 積分の前半）
 pub fn update_positions(
     time: Res<Time>,
-    state: Res<crate::resources::SimulationState>,
+    state: Res<SimulationState>,
     mut query: Query<(&mut Transform, &Velocity, &Acceleration), With<Particle>>,
 ) {
     // シミュレーションが停止中なら何もしない
-    if *state == crate::resources::SimulationState::Paused {
+    if *state == SimulationState::Paused {
         return;
     }
 
@@ -40,7 +40,7 @@ pub fn apply_boundary_wrap(
 /// 加速度を計算（並列化 + 最適化版）
 pub fn calculate_accelerations(
     config: Res<SimulationConfig>,
-    state: Res<crate::resources::SimulationState>,
+    state: Res<SimulationState>,
     spatial_grid: Res<SpatialGrid>,
     mut query: Query<(
         Entity,
@@ -52,7 +52,7 @@ pub fn calculate_accelerations(
     )>,
 ) {
     // シミュレーションが停止中なら何もしない
-    if *state == crate::resources::SimulationState::Paused {
+    if *state == SimulationState::Paused {
         return;
     }
     let softening_sq = config.softening_epsilon * config.softening_epsilon;
@@ -183,11 +183,11 @@ pub fn calculate_accelerations(
 /// 速度を更新（Velocity Verlet 積分の後半）
 pub fn update_velocities(
     time: Res<Time>,
-    state: Res<crate::resources::SimulationState>,
+    state: Res<SimulationState>,
     mut query: Query<(&mut Velocity, &Acceleration, &PhysicsParams), With<Particle>>,
 ) {
     // シミュレーションが停止中なら何もしない
-    if *state == crate::resources::SimulationState::Paused {
+    if *state == SimulationState::Paused {
         return;
     }
 

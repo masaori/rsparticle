@@ -1,18 +1,18 @@
 use bevy::prelude::*;
 
 use crate::components::*;
-use crate::resources::{EvolutionConfig, SimulationConfig};
+use crate::resources::{EvolutionConfig, SimulationConfig, SimulationState};
 
 /// 移動距離と時間経過による寿命の減衰を適用
 pub fn update_lifetimes(
     time: Res<Time>,
-    state: Res<crate::resources::SimulationState>,
+    state: Res<SimulationState>,
     config: Res<EvolutionConfig>,
     sim_config: Res<SimulationConfig>,
     mut query: Query<(&Transform, &mut ParticleState, &mut KinematicsHistory)>,
 ) {
     // シミュレーションが停止中なら何もしない
-    if *state == crate::resources::SimulationState::Paused {
+    if *state == SimulationState::Paused {
         return;
     }
     let dt = time.delta_seconds();

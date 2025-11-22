@@ -6,7 +6,7 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 
 use crate::components::*;
-use crate::resources::{EvolutionConfig, SimulationConfig, SpatialGrid};
+use crate::resources::{EvolutionConfig, SimulationAlgorithm, SimulationConfig, SimulationState, SpatialGrid};
 
 #[derive(Clone)]
 struct ParentSnapshot {
@@ -21,8 +21,8 @@ struct ParentSnapshot {
 /// 交配と子粒子生成を試みる
 pub fn attempt_mating(
     mut commands: Commands,
-    state: Res<crate::resources::SimulationState>,
-    algorithm: Res<crate::resources::SimulationAlgorithm>,
+    state: Res<SimulationState>,
+    algorithm: Res<SimulationAlgorithm>,
     sim_config: Res<SimulationConfig>,
     evolution: Res<EvolutionConfig>,
     spatial_grid: Res<SpatialGrid>,
@@ -36,12 +36,12 @@ pub fn attempt_mating(
     )>,
 ) {
     // シミュレーションが停止中なら何もしない
-    if *state == crate::resources::SimulationState::Paused {
+    if *state == SimulationState::Paused {
         return;
     }
 
     // PhysicsOnly モードでは交配を行わない
-    if *algorithm == crate::resources::SimulationAlgorithm::PhysicsOnly {
+    if *algorithm == SimulationAlgorithm::PhysicsOnly {
         return;
     }
 
@@ -51,7 +51,7 @@ pub fn attempt_mating(
 
     // FastReproduction モードでは子供を増やす
     let max_children = match *algorithm {
-        crate::resources::SimulationAlgorithm::FastReproduction => evolution.max_children_per_tick * 3,
+        SimulationAlgorithm::FastReproduction => evolution.max_children_per_tick * 3,
         _ => evolution.max_children_per_tick,
     };
 
