@@ -30,6 +30,8 @@ fn main() {
         ))
         .insert_resource(config.clone())
         .insert_resource(EvolutionConfig::default())
+        .insert_resource(SimulationState::Running)
+        .insert_resource(SimulationAlgorithm::Standard)
         .insert_resource(SpatialGrid::new(
             config.world_width,
             config.world_height,
@@ -40,6 +42,7 @@ fn main() {
         .add_systems(
             Update,
             (
+                handle_ui_interaction,
                 update_positions,
                 apply_boundary_wrap,
                 update_spatial_grid,

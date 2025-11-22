@@ -67,6 +67,34 @@ impl Default for EvolutionConfig {
     }
 }
 
+/// シミュレーション状態
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+pub enum SimulationState {
+    Running,
+    Paused,
+}
+
+/// シミュレーションアルゴリズム
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+pub enum SimulationAlgorithm {
+    /// 標準の進化シミュレーション（交配+進化）
+    Standard,
+    /// 交配なしの物理シミュレーションのみ
+    PhysicsOnly,
+    /// 高速繁殖モード
+    FastReproduction,
+}
+
+impl SimulationAlgorithm {
+    pub fn name(&self) -> &'static str {
+        match self {
+            SimulationAlgorithm::Standard => "Standard Evolution",
+            SimulationAlgorithm::PhysicsOnly => "Physics Only",
+            SimulationAlgorithm::FastReproduction => "Fast Reproduction",
+        }
+    }
+}
+
 /// 空間分割グリッド
 #[derive(Resource)]
 pub struct SpatialGrid {
