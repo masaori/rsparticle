@@ -3,6 +3,105 @@ use crate::resources::*;
 use bevy::prelude::*;
 use rand::Rng;
 
+/// 粒子をスポーンする共通ヘルパー関数
+fn spawn_particle(
+    commands: &mut Commands,
+    config: &SimulationConfig,
+    evolution: &EvolutionConfig,
+    rng: &mut rand::rngs::ThreadRng,
+) {
+    let pos = Vec2::new(
+        rng.gen::<f32>() * config.world_width,
+        rng.gen::<f32>() * config.world_height,
+    );
+
+    let mass = rng.gen_range(0.5..2.0);
+    let drag_coefficient = rng.gen_range(0.01..3.5);
+
+    let signal_raw = Vec3::new(
+        rng.gen_range(-1.0..1.0),
+        rng.gen_range(-1.0..1.0),
+        rng.gen_range(-1.0..1.0),
+    );
+    let response_raw = Vec3::new(
+        rng.gen_range(-1.0..1.0),
+        rng.gen_range(-1.0..1.0),
+        rng.gen_range(-1.0..1.0),
+    );
+    let signal_vector = signal_raw.normalize_or_zero();
+    let response_vector = response_raw.normalize_or_zero();
+
+    let mate_kernel = MateKernelParams {
+        bias: rng.gen_range(-0.5..0.5),
+        distance_weight: rng.gen_range(0.5..1.5),
+        distance_scale: 1.0,
+        energy_weight: rng.gen_range(0.5..1.5),
+        similarity_weight: rng.gen_range(-1.0..1.0),
+        diversity_weight: rng.gen_range(0.2..1.2),
+        crowding_weight: rng.gen_range(0.2..1.0),
+        slope: rng.gen_range(0.5..2.0),
+    };
+
+    let mutation = MutationParams {
+        sigma_base: evolution.mutation_sigma_base * rng.gen_range(0.8..1.2),
+        sigma_scale: evolution.mutation_sigma_scale * rng.gen_range(0.8..1.2),
+        trait_lock_probability: evolution.trait_lock_probability * rng.gen_range(0.7..1.3),
+    };
+
+    let mut genome = ParticleGenome {
+        mass,
+        drag_coefficient,
+        signal_vector,
+        response_vector,
+        mate_kernel,
+        mutation,
+        dominance_bias: rng.gen_range(0.1..0.9),
+        reproductive_strength: rng.gen_range(0.5..1.5),
+    };
+
+    let appearance = ParticleAppearance::from_genome(&genome);
+    let collision_radius = appearance.collision_radius();
+    genome.mate_kernel.distance_scale =
+        (collision_radius * evolution.mating_radius_ratio * rng.gen_range(0.5..1.5)).max(1.0);
+    let sprite_size = appearance.sprite_extents();
+    let display_color = appearance.color;
+
+    let state = ParticleState {
+        lifetime: config.initial_lifetime,
+        max_lifetime: config.initial_lifetime,
+        distance_traveled: 0.0,
+        offspring_count: 0,
+        cooldown: 0.0,
+    };
+
+    let velocity = Vec2::new(rng.gen_range(-20.0..20.0), rng.gen_range(-20.0..20.0));
+
+    commands.spawn((
+        SpriteBundle {
+            sprite: Sprite {
+                color: display_color,
+                custom_size: Some(sprite_size),
+                ..default()
+            },
+            transform: Transform::from_xyz(pos.x, pos.y, 0.0),
+            ..default()
+        },
+        Particle {
+            radius: collision_radius,
+        },
+        genome,
+        appearance,
+        state,
+        Velocity { value: velocity },
+        Acceleration::default(),
+        PhysicsParams {
+            mass,
+            drag_coefficient,
+        },
+        KinematicsHistory { last_position: pos },
+    ));
+}
+
 /// 初期セットアップ
 pub fn setup(
     mut commands: Commands,
@@ -18,96 +117,7 @@ pub fn setup(
     let mut rng = rand::thread_rng();
 
     for _ in 0..config.initial_population {
-        let pos = Vec2::new(
-            rng.gen::<f32>() * config.world_width,
-            rng.gen::<f32>() * config.world_height,
-        );
-
-        let mass = rng.gen_range(0.5..2.0);
-        let drag_coefficient = rng.gen_range(0.01..3.5);
-
-        let signal_raw = Vec3::new(
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-        );
-        let response_raw = Vec3::new(
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-        );
-        let signal_vector = signal_raw.normalize_or_zero();
-        let response_vector = response_raw.normalize_or_zero();
-
-        let mate_kernel = MateKernelParams {
-            bias: rng.gen_range(-0.5..0.5),
-            distance_weight: rng.gen_range(0.5..1.5),
-            distance_scale: 1.0,
-            energy_weight: rng.gen_range(0.5..1.5),
-            similarity_weight: rng.gen_range(-1.0..1.0),
-            diversity_weight: rng.gen_range(0.2..1.2),
-            crowding_weight: rng.gen_range(0.2..1.0),
-            slope: rng.gen_range(0.5..2.0),
-        };
-
-        let mutation = MutationParams {
-            sigma_base: evolution.mutation_sigma_base * rng.gen_range(0.8..1.2),
-            sigma_scale: evolution.mutation_sigma_scale * rng.gen_range(0.8..1.2),
-            trait_lock_probability: evolution.trait_lock_probability * rng.gen_range(0.7..1.3),
-        };
-
-        let mut genome = ParticleGenome {
-            mass,
-            drag_coefficient,
-            signal_vector,
-            response_vector,
-            mate_kernel,
-            mutation,
-            dominance_bias: rng.gen_range(0.1..0.9),
-            reproductive_strength: rng.gen_range(0.5..1.5),
-        };
-
-        let appearance = ParticleAppearance::from_genome(&genome);
-        let collision_radius = appearance.collision_radius();
-        genome.mate_kernel.distance_scale =
-            (collision_radius * evolution.mating_radius_ratio * rng.gen_range(0.5..1.5)).max(1.0);
-        let sprite_size = appearance.sprite_extents();
-        let display_color = appearance.color;
-
-        let state = ParticleState {
-            lifetime: config.initial_lifetime,
-            max_lifetime: config.initial_lifetime,
-            distance_traveled: 0.0,
-            offspring_count: 0,
-            cooldown: 0.0,
-        };
-
-        let velocity = Vec2::new(rng.gen_range(-20.0..20.0), rng.gen_range(-20.0..20.0));
-
-        commands.spawn((
-            SpriteBundle {
-                sprite: Sprite {
-                    color: display_color,
-                    custom_size: Some(sprite_size),
-                    ..default()
-                },
-                transform: Transform::from_xyz(pos.x, pos.y, 0.0),
-                ..default()
-            },
-            Particle {
-                radius: collision_radius,
-            },
-            genome,
-            appearance,
-            state,
-            Velocity { value: velocity },
-            Acceleration::default(),
-            PhysicsParams {
-                mass: mass,
-                drag_coefficient,
-            },
-            KinematicsHistory { last_position: pos },
-        ));
+        spawn_particle(&mut commands, &config, &evolution, &mut rng);
     }
 
     info!("Spawned {} particles", config.initial_population);
@@ -383,96 +393,7 @@ fn spawn_initial_particles(
     let mut rng = rand::thread_rng();
 
     for _ in 0..config.initial_population {
-        let pos = Vec2::new(
-            rng.gen::<f32>() * config.world_width,
-            rng.gen::<f32>() * config.world_height,
-        );
-
-        let mass = rng.gen_range(0.5..2.0);
-        let drag_coefficient = rng.gen_range(0.01..3.5);
-
-        let signal_raw = Vec3::new(
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-        );
-        let response_raw = Vec3::new(
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-            rng.gen_range(-1.0..1.0),
-        );
-        let signal_vector = signal_raw.normalize_or_zero();
-        let response_vector = response_raw.normalize_or_zero();
-
-        let mate_kernel = MateKernelParams {
-            bias: rng.gen_range(-0.5..0.5),
-            distance_weight: rng.gen_range(0.5..1.5),
-            distance_scale: 1.0,
-            energy_weight: rng.gen_range(0.5..1.5),
-            similarity_weight: rng.gen_range(-1.0..1.0),
-            diversity_weight: rng.gen_range(0.2..1.2),
-            crowding_weight: rng.gen_range(0.2..1.0),
-            slope: rng.gen_range(0.5..2.0),
-        };
-
-        let mutation = MutationParams {
-            sigma_base: evolution.mutation_sigma_base * rng.gen_range(0.8..1.2),
-            sigma_scale: evolution.mutation_sigma_scale * rng.gen_range(0.8..1.2),
-            trait_lock_probability: evolution.trait_lock_probability * rng.gen_range(0.7..1.3),
-        };
-
-        let mut genome = ParticleGenome {
-            mass,
-            drag_coefficient,
-            signal_vector,
-            response_vector,
-            mate_kernel,
-            mutation,
-            dominance_bias: rng.gen_range(0.1..0.9),
-            reproductive_strength: rng.gen_range(0.5..1.5),
-        };
-
-        let appearance = ParticleAppearance::from_genome(&genome);
-        let collision_radius = appearance.collision_radius();
-        genome.mate_kernel.distance_scale =
-            (collision_radius * evolution.mating_radius_ratio * rng.gen_range(0.5..1.5)).max(1.0);
-        let sprite_size = appearance.sprite_extents();
-        let display_color = appearance.color;
-
-        let state = ParticleState {
-            lifetime: config.initial_lifetime,
-            max_lifetime: config.initial_lifetime,
-            distance_traveled: 0.0,
-            offspring_count: 0,
-            cooldown: 0.0,
-        };
-
-        let velocity = Vec2::new(rng.gen_range(-20.0..20.0), rng.gen_range(-20.0..20.0));
-
-        commands.spawn((
-            SpriteBundle {
-                sprite: Sprite {
-                    color: display_color,
-                    custom_size: Some(sprite_size),
-                    ..default()
-                },
-                transform: Transform::from_xyz(pos.x, pos.y, 0.0),
-                ..default()
-            },
-            Particle {
-                radius: collision_radius,
-            },
-            genome,
-            appearance,
-            state,
-            Velocity { value: velocity },
-            Acceleration::default(),
-            PhysicsParams {
-                mass: mass,
-                drag_coefficient,
-            },
-            KinematicsHistory { last_position: pos },
-        ));
+        spawn_particle(commands, config, evolution, &mut rng);
     }
 }
 
