@@ -93,14 +93,6 @@ impl SimulationAlgorithm {
             SimulationAlgorithm::FastReproduction => "Fast Reproduction",
         }
     }
-
-    pub fn all() -> [SimulationAlgorithm; 3] {
-        [
-            SimulationAlgorithm::Standard,
-            SimulationAlgorithm::PhysicsOnly,
-            SimulationAlgorithm::FastReproduction,
-        ]
-    }
 }
 
 /// 空間分割グリッド
