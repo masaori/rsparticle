@@ -6,10 +6,15 @@ use crate::resources::{EvolutionConfig, SimulationConfig};
 /// 移動距離と時間経過による寿命の減衰を適用
 pub fn update_lifetimes(
     time: Res<Time>,
+    state: Res<crate::resources::SimulationState>,
     config: Res<EvolutionConfig>,
     sim_config: Res<SimulationConfig>,
     mut query: Query<(&Transform, &mut ParticleState, &mut KinematicsHistory)>,
 ) {
+    // シミュレーションが停止中なら何もしない
+    if *state == crate::resources::SimulationState::Paused {
+        return;
+    }
     let dt = time.delta_seconds();
     let half_world_width = sim_config.world_width * 0.5;
     let half_world_height = sim_config.world_height * 0.5;

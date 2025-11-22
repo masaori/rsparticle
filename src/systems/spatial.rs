@@ -7,6 +7,9 @@ pub fn update_spatial_grid(
     mut spatial_grid: ResMut<SpatialGrid>,
     query: Query<(Entity, &Transform), With<Particle>>,
 ) {
+    // シミュレーションが停止中でも空間グリッドは更新する（他のシステムが使うため）
+    // ただし、停止中は物理演算などが動いていないため、実際には変化がないはず
+
     // グリッドをクリアするが、容量は保持
     for (_, entities) in spatial_grid.grid.iter_mut() {
         entities.clear();

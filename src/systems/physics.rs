@@ -6,8 +6,14 @@ use rayon::prelude::*;
 /// 位置を更新（Velocity Verlet 積分の前半）
 pub fn update_positions(
     time: Res<Time>,
+    state: Res<crate::resources::SimulationState>,
     mut query: Query<(&mut Transform, &Velocity, &Acceleration), With<Particle>>,
 ) {
+    // シミュレーションが停止中なら何もしない
+    if *state == crate::resources::SimulationState::Paused {
+        return;
+    }
+
     // FPS低下による爆発を防ぐため、dtを最大16.67ms(60fps)に制限
     let dt = time.delta_seconds().min(1.0 / 60.0);
     let dt_sq = dt * dt;
@@ -34,6 +40,7 @@ pub fn apply_boundary_wrap(
 /// 加速度を計算（並列化 + 最適化版）
 pub fn calculate_accelerations(
     config: Res<SimulationConfig>,
+    state: Res<crate::resources::SimulationState>,
     spatial_grid: Res<SpatialGrid>,
     mut query: Query<(
         Entity,
@@ -44,6 +51,10 @@ pub fn calculate_accelerations(
         &mut Acceleration,
     )>,
 ) {
+    // シミュレーションが停止中なら何もしない
+    if *state == crate::resources::SimulationState::Paused {
+        return;
+    }
     let softening_sq = config.softening_epsilon * config.softening_epsilon;
     let interaction_radius_sq = config.interaction_radius * config.interaction_radius;
     let max_acc_sq = config.max_acceleration * config.max_acceleration;
@@ -172,8 +183,14 @@ pub fn calculate_accelerations(
 /// 速度を更新（Velocity Verlet 積分の後半）
 pub fn update_velocities(
     time: Res<Time>,
+    state: Res<crate::resources::SimulationState>,
     mut query: Query<(&mut Velocity, &Acceleration, &PhysicsParams), With<Particle>>,
 ) {
+    // シミュレーションが停止中なら何もしない
+    if *state == crate::resources::SimulationState::Paused {
+        return;
+    }
+
     // FPS低下による爆発を防ぐため、dtを最大16.67ms(60fps)に制限
     let dt = time.delta_seconds().min(1.0 / 60.0);
 
